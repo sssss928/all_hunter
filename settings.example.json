@@ -1,0 +1,121 @@
+{
+    "homepage": "about:blank",
+    "browser": "chrome",
+    "language": "English",
+    "ticket_number": 2,
+    "refresh_datetime": "",
+    "ocr_captcha": {
+        "enable": true,
+        "beta": true,
+        "force_submit": false,
+        "image_source": "canvas",
+        "use_universal": true,
+        "path": "assets/model/universal"
+    },
+    "webdriver_type": "nodriver",
+    "date_auto_select": {
+        "enable": true,
+        "date_keyword": "",
+        "mode": "random"
+    },
+    "area_auto_select": {
+        "enable": true,
+        "mode": "random",
+        "area_keyword": ""
+    },
+    "keyword_exclude": "\"輪椅\",\"身障\",\"身心\",\"障礙\",\"Restricted View\",\"燈柱遮蔽\",\"視線不完整\"",
+    "kktix": {
+        "auto_press_next_step_button": true,
+        "auto_fill_ticket_number": true,
+        "max_dwell_time": 90
+    },
+    "cityline": {},
+    "tixcraft": {
+        "pass_date_is_sold_out": true,
+        "auto_reload_coming_soon_page": true,
+        "allow_less_tickets": false
+    },
+    "nolworld": {
+        "check_interval": 5,
+        "pre_sale_mode": false,
+        "lock_only_mode": false,
+        "auto_notice_and_buy": true,
+        "block_delay_ms": 600,
+        "custom_blocks": "",
+        "ticket_pool_enabled": true,
+        "ticket_pool_refresh_minutes": 15,
+        "security_handoff": true,
+        "session_timeout_minutes": 10
+    },
+    "contact": {
+        "real_name": "",
+        "phone": "",
+        "credit_card_prefix": ""
+    },
+    "accounts": {
+        "tixcraft_sid": "",
+        "ibonqware": "",
+        "funone_session_cookie": "",
+        "fansigo_cookie": "",
+        "fansigo_account": "",
+        "fansigo_password": "",
+        "nolworld_account": "",
+        "nolworld_password": "",
+        "facebook_account": "",
+        "kktix_account": "",
+        "fami_account": "",
+        "cityline_account": "",
+        "urbtix_account": "",
+        "hkticketing_account": "",
+        "kham_account": "",
+        "ticket_account": "",
+        "udn_account": "",
+        "ticketplus_account": "",
+        "facebook_password": "",
+        "kktix_password": "",
+        "fami_password": "",
+        "urbtix_password": "",
+        "cityline_password": "",
+        "hkticketing_password": "",
+        "kham_password": "",
+        "ticket_password": "",
+        "udn_password": "",
+        "ticketplus_password": ""
+    },
+    "advanced": {
+        "play_sound": {
+            "ticket": true,
+            "order": true,
+            "filename": "assets/sounds/ding-dong.wav"
+        },
+        "disable_adjacent_seat": false,
+        "hide_some_image": false,
+        "block_facebook_network": false,
+        "headless": false,
+        "verbose": false,
+        "show_timestamp": true,
+        "auto_guess_options": false,
+        "user_guess_string": "",
+        "discount_code": "",
+        "server_port": 16888,
+        "remote_url": "",
+        "auto_reload_page_interval": 5,
+        "tixcraft_soft_block_delay": "",
+        "auto_reload_overheat_count": 4,
+        "auto_reload_overheat_cd": 1.0,
+        "reset_browser_interval": 0,
+        "proxy_server_port": "",
+        "window_size": "600,1024",
+        "idle_keyword": "",
+        "resume_keyword": "",
+        "idle_keyword_second": "",
+        "resume_keyword_second": "",
+        "discord_webhook_url": "",
+        "discord_message": "",
+        "telegram_bot_token": "",
+        "telegram_chat_id": "",
+        "telegram_message": ""
+    },
+    "date_auto_fallback": false,
+    "area_auto_fallback": false
+}

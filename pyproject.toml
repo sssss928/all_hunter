@@ -1,0 +1,30 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    ".tools",
+    ".venv",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Correctness rules enforced after the cross-platform cleanup. Formatting-only
+# style debt remains intentionally outside CI.
+select = [
+    "E9",
+    "F63",
+    "F7",
+    "F82",
+    "W605",
+    "E722",
+    "F401",
+    "F811",
+    "E713",
+    "E714",
+    "E712",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
