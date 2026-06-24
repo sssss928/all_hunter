@@ -40,6 +40,10 @@ const nol_ticket_pool_enabled = document.querySelector('#nol_ticket_pool_enabled
 const nol_ticket_pool_refresh_minutes = document.querySelector('#nol_ticket_pool_refresh_minutes');
 const nol_security_handoff = document.querySelector('#nol_security_handoff');
 const nol_session_timeout_minutes = document.querySelector('#nol_session_timeout_minutes');
+const nol_event_options_status = document.querySelector('#nol_event_options_status');
+const nol_schedule_options = document.querySelector('#nol_schedule_options');
+const nol_seat_type_options = document.querySelector('#nol_seat_type_options');
+const nol_seat_zone_targets = document.querySelector('#nol_seat_zone_targets');
 
 const auto_reload_page_interval = document.querySelector('#auto_reload_page_interval');
 const tixcraft_soft_block_delay = document.querySelector('#tixcraft_soft_block_delay');
@@ -83,6 +87,7 @@ const fansigo_account = document.querySelector('#fansigo_account');
 const fansigo_password = document.querySelector('#fansigo_password');
 const nolworld_account = document.querySelector('#nolworld_account');
 const nolworld_password = document.querySelector('#nolworld_password');
+const nolworld_cookies = document.querySelector('#nolworld_cookies');
 const facebook_account = document.querySelector('#facebook_account');
 const kktix_account = document.querySelector('#kktix_account');
 const fami_account = document.querySelector('#fami_account');
@@ -897,6 +902,7 @@ function updatePlatformFields(url) {
     if (platform === _lastPlatform) {
         updateTixcraftSoftBlockDelayVisibility(url);
         updateAutoReloadVisibility(platform);
+        scheduleNolWorldOptionsFetch(url);
         return;
     }
     _lastPlatform = platform;
@@ -907,6 +913,119 @@ function updatePlatformFields(url) {
     updateTixcraftSoftBlockDelayVisibility(url);
     updateAutoReloadVisibility(platform);
     updateCitylineHintVisibility();
+    scheduleNolWorldOptionsFetch(url);
+}
+
+let nolOptionsTimer = null;
+let nolOptionsUrl = '';
+
+function selectedNolSchedules() {
+    return Array.from(nol_schedule_options?.querySelectorAll('input[type="checkbox"]:checked') || [])
+        .map(item => {
+            try {
+                return JSON.parse(item.value);
+            } catch (_) {
+                return null;
+            }
+        })
+        .filter(Boolean);
+}
+
+function selectedNolSeatTypes() {
+    return Array.from(nol_seat_type_options?.querySelectorAll('input[type="checkbox"]:checked') || [])
+        .map(item => item.value)
+        .filter(Boolean);
+}
+
+function renderNolOptionCheckboxes(container, items, selectedValues, kind) {
+    if (!container) return;
+    container.innerHTML = '';
+    const selectedSet = new Set(selectedValues || []);
+    items.forEach((item, index) => {
+        const id = `nol_${kind}_${index}`;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-check';
+        const input = document.createElement('input');
+        input.className = 'form-check-input';
+        input.type = 'checkbox';
+        input.id = id;
+        if (kind === 'schedule') {
+            input.value = JSON.stringify({
+                date: item.date || '',
+                time: item.time || '',
+                label: item.label || ''
+            });
+            input.checked = selectedSet.has(`${item.date || ''}|${item.time || ''}`);
+        } else {
+            input.value = item.type || item.label || '';
+            input.checked = selectedSet.has(input.value);
+        }
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = id;
+        label.textContent = item.label || item.type || item.date || '';
+        wrapper.append(input, label);
+        container.appendChild(wrapper);
+        input.addEventListener('change', check_unsaved_fields);
+    });
+}
+
+function renderNolWorldOptions(options) {
+    const nolworld = settings?.nolworld || {};
+    const scheduleSelected = (nolworld.schedule_targets || [])
+        .map(item => `${item.date || ''}|${item.time || ''}`);
+    const typeSelected = nolworld.seat_types || [];
+    renderNolOptionCheckboxes(
+        nol_schedule_options,
+        options.schedules || [],
+        scheduleSelected,
+        'schedule'
+    );
+    renderNolOptionCheckboxes(
+        nol_seat_type_options,
+        options.seatTypes || [],
+        typeSelected,
+        'seat_type'
+    );
+    const scheduleCount = (options.schedules || []).length;
+    const seatTypeCount = (options.seatTypes || []).length;
+    if (nol_event_options_status) {
+        nol_event_options_status.textContent = scheduleCount || seatTypeCount
+            ? `Loaded ${scheduleCount} schedule option(s) and ${seatTypeCount} ticket type(s).`
+            : 'No public schedule or ticket type options were found on this page.';
+    }
+}
+
+function scheduleNolWorldOptionsFetch(url) {
+    if (!nol_event_options_status) return;
+    if (detectPlatform(url) !== 'nolworld') {
+        nolOptionsUrl = '';
+        if (nol_schedule_options) nol_schedule_options.innerHTML = '';
+        if (nol_seat_type_options) nol_seat_type_options.innerHTML = '';
+        nol_event_options_status.textContent = 'Paste a NOL World event URL above to load public dates and ticket types.';
+        return;
+    }
+    clearTimeout(nolOptionsTimer);
+    nolOptionsTimer = setTimeout(() => fetchNolWorldOptions(url), 600);
+}
+
+function fetchNolWorldOptions(url) {
+    const trimmedUrl = (url || '').trim();
+    if (!trimmedUrl || trimmedUrl === nolOptionsUrl) return;
+    nolOptionsUrl = trimmedUrl;
+    if (nol_event_options_status) {
+        nol_event_options_status.textContent = 'Loading NOL World event options...';
+    }
+    $.getJSON('/nolworld/options', { url: trimmedUrl })
+        .done(renderNolWorldOptions)
+        .fail((xhr) => {
+            if (nol_schedule_options) nol_schedule_options.innerHTML = '';
+            if (nol_seat_type_options) nol_seat_type_options.innerHTML = '';
+            const message = xhr.responseJSON?.message || xhr.statusText || 'request failed';
+            if (nol_event_options_status) {
+                nol_event_options_status.textContent = `Unable to load NOL World options: ${message}`;
+            }
+        });
 }
 
 function updateAutoReloadVisibility(platform) {
@@ -1003,6 +1122,9 @@ function load_settins_to_form(settings)
         nol_ticket_pool_refresh_minutes.value = nolworld.ticket_pool_refresh_minutes ?? 15;
         nol_security_handoff.checked = nolworld.security_handoff ?? true;
         nol_session_timeout_minutes.value = nolworld.session_timeout_minutes ?? 10;
+        if (nol_seat_zone_targets) {
+            nol_seat_zone_targets.value = format_keyword_for_display(nolworld.seat_zones || '');
+        }
 
         auto_reload_page_interval.value = settings.advanced.auto_reload_page_interval;
         tixcraft_soft_block_delay.value = settings.advanced.tixcraft_soft_block_delay || '';
@@ -1068,6 +1190,7 @@ function load_settins_to_form(settings)
         fansigo_password.value = settings.accounts.fansigo_password || '';
         nolworld_account.value = settings.accounts.nolworld_account || '';
         nolworld_password.value = settings.accounts.nolworld_password || '';
+        nolworld_cookies.value = settings.accounts.nolworld_cookies || '';
         facebook_account.value = settings.accounts.facebook_account;
         kktix_account.value = settings.accounts.kktix_account;
         fami_account.value = settings.accounts.fami_account;
@@ -1295,6 +1418,9 @@ function save_changes_to_dict(silent_flag)
             settings.nolworld.ticket_pool_refresh_minutes = Math.max(1, Math.min(1440, parseInt(nol_ticket_pool_refresh_minutes.value) || 15));
             settings.nolworld.security_handoff = nol_security_handoff.checked;
             settings.nolworld.session_timeout_minutes = Math.max(5, Math.min(10, Number(nol_session_timeout_minutes.value) || 10));
+            settings.nolworld.schedule_targets = selectedNolSchedules();
+            settings.nolworld.seat_types = selectedNolSeatTypes();
+            settings.nolworld.seat_zones = format_config_keyword_for_json(nol_seat_zone_targets?.value || '');
 
             settings.advanced.auto_reload_page_interval = Number(auto_reload_page_interval.value);
             settings.advanced.tixcraft_soft_block_delay = tixcraft_soft_block_delay_value;
@@ -1353,6 +1479,7 @@ function save_changes_to_dict(silent_flag)
             settings.accounts.fansigo_password = fansigo_password.value;
             settings.accounts.nolworld_account = nolworld_account.value;
             settings.accounts.nolworld_password = nolworld_password.value;
+            settings.accounts.nolworld_cookies = nolworld_cookies.value;
             settings.accounts.facebook_account = facebook_account.value;
             settings.accounts.kktix_account = kktix_account.value;
             settings.accounts.fami_account = fami_account.value;
@@ -1489,6 +1616,7 @@ function check_unsaved_fields()
             "fansigo_password",
             "nolworld_account",
             "nolworld_password",
+            "nolworld_cookies",
             "facebook_account",
             "kktix_account",
             "fami_account",
@@ -1598,7 +1726,8 @@ function check_unsaved_fields()
             nol_ticket_pool_enabled: settings.nolworld?.ticket_pool_enabled ?? true,
             nol_ticket_pool_refresh_minutes: settings.nolworld?.ticket_pool_refresh_minutes ?? 15,
             nol_security_handoff: settings.nolworld?.security_handoff ?? true,
-            nol_session_timeout_minutes: settings.nolworld?.session_timeout_minutes ?? 10
+            nol_session_timeout_minutes: settings.nolworld?.session_timeout_minutes ?? 10,
+            nol_seat_zone_targets: format_keyword_for_display(settings.nolworld?.seat_zones || '')
         };
         Object.entries(nolworldFields).forEach(([id, savedValue]) => {
             const field = document.querySelector('#' + id);
@@ -1610,6 +1739,20 @@ function check_unsaved_fields()
                 field.classList.remove('is-invalid');
             }
         });
+        const savedSchedules = JSON.stringify(settings.nolworld?.schedule_targets || []);
+        const currentSchedules = JSON.stringify(selectedNolSchedules());
+        if (savedSchedules !== currentSchedules) {
+            nol_schedule_options?.classList.add('is-invalid');
+        } else {
+            nol_schedule_options?.classList.remove('is-invalid');
+        }
+        const savedSeatTypes = JSON.stringify(settings.nolworld?.seat_types || []);
+        const currentSeatTypes = JSON.stringify(selectedNolSeatTypes());
+        if (savedSeatTypes !== currentSeatTypes) {
+            nol_seat_type_options?.classList.add('is-invalid');
+        } else {
+            nol_seat_type_options?.classList.remove('is-invalid');
+        }
 
     }
 }

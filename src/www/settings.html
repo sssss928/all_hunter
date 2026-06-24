@@ -354,6 +354,17 @@
           </div>
         </div>
         <div class="row mb-3 disappear" data-under="nolworld">
+          <label class="col-sm-2 col-form-label">NOL event options</label>
+          <div class="col-sm-10 col-lg-8 col-xl-6">
+            <div id="nol_event_options_status" class="form-text mb-2">Paste a NOL World event URL above to load public dates and ticket types.</div>
+            <div id="nol_schedule_options" class="nol-option-list mb-2"></div>
+            <div id="nol_seat_type_options" class="nol-option-list mb-2"></div>
+            <label for="nol_seat_zone_targets" class="form-label small mb-1">Seat zones / blocks</label>
+            <textarea class="form-control" id="nol_seat_zone_targets" rows="2" placeholder="101 Side; 102; FLOOR A"></textarea>
+            <div class="form-text">Public event pages expose dates/times and ticket types. Detailed zones appear only after entering the booking seat page, so enter preferred zone text here if needed.</div>
+          </div>
+        </div>
+        <div class="row mb-3 disappear" data-under="nolworld">
           <label class="col-sm-2 col-form-label">NOL 票池查詢<span class="help-icon" data-help="nol_ticket_pool_enabled" title="NOL 票池查詢說明" tabindex="0" role="button" aria-label="NOL 票池查詢 說明"></span></label>
           <div class="col-sm-10 col-lg-8 col-xl-6">
             <div class="form-check form-switch">
@@ -994,6 +1005,13 @@
             </div>
             <div class="form-text">程式會自動填入帳密；若 NOL 顯示 Cloudflare Turnstile，請先由使用者完成驗證，之後會自動送出登入。</div>
             </form>
+          </div>
+        </div>
+        <div class="row mb-3" data-under="nolworld">
+          <label for="nolworld_cookies" class="col-sm-2 col-form-label">NOL World cookies</label>
+          <div class="col-sm-10 col-lg-8 col-xl-6">
+            <textarea class="form-control" id="nolworld_cookies" rows="3" placeholder="name=value; name2=value2"></textarea>
+            <div class="form-text">Optional. Paste the required NOL World login cookies as a Cookie header, JSON object, or JSON array. NOL World commonly needs multiple session/auth cookies, unlike Tixcraft's single TIXUISID.</div>
           </div>
         </div>
 

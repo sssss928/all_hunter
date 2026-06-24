@@ -26,6 +26,21 @@ textarea {
 	display: none;
 }
 
+.nol-option-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+}
+
+.nol-option-list:empty {
+    display: none;
+}
+
+.nol-option-list .form-check {
+    min-width: 160px;
+    margin-bottom: 0;
+}
+
 .bd-callout {
     padding: 1.25rem;
     margin-top: 1.25rem;

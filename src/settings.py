@@ -2,12 +2,15 @@
 #encoding=utf-8
 import asyncio
 import base64
+from datetime import date, datetime, timedelta
+import html
 import json
 import os
+import re
 import threading
 import time
 import webbrowser
-from datetime import datetime
+from urllib.parse import urlparse
 
 import tornado
 from tornado.web import Application
@@ -129,6 +132,9 @@ def get_default_config():
     config_dict["nolworld"]["auto_notice_and_buy"] = True
     config_dict["nolworld"]["block_delay_ms"] = 600
     config_dict["nolworld"]["custom_blocks"] = ""
+    config_dict["nolworld"]["schedule_targets"] = []
+    config_dict["nolworld"]["seat_types"] = []
+    config_dict["nolworld"]["seat_zones"] = ""
     config_dict["nolworld"]["ticket_pool_enabled"] = True
     config_dict["nolworld"]["ticket_pool_refresh_minutes"] = 15
     config_dict["nolworld"]["security_handoff"] = True
@@ -151,6 +157,7 @@ def get_default_config():
     config_dict["accounts"]["fansigo_password"] = ""
     config_dict["accounts"]["nolworld_account"] = ""
     config_dict["accounts"]["nolworld_password"] = ""
+    config_dict["accounts"]["nolworld_cookies"] = ""
     config_dict["accounts"]["facebook_account"] = ""
     config_dict["accounts"]["kktix_account"] = ""
     config_dict["accounts"]["fami_account"] = ""
@@ -415,6 +422,179 @@ def clean_tmp_file():
             except Exception as e:
                 print(f"[WARNING] Failed to remove {item}: {e}")
 
+def _json_string_unescape(value):
+    try:
+        return json.loads('"%s"' % value)
+    except Exception:
+        return value.replace(r"\r\n", "\n").replace(r"\n", "\n").replace(r"\/", "/")
+
+
+def _extract_nolworld_rsc_field(html_text, field_name):
+    patterns = [
+        r'\\"%s\\":\\"(.*?)(?=\\"(?:,\\"|}))' % re.escape(field_name),
+        r'"%s":"((?:\\.|[^"\\])*)"' % re.escape(field_name),
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html_text)
+        if match:
+            return _json_string_unescape(match.group(1))
+    return ""
+
+
+def _normalize_nolworld_time(raw_text):
+    text = str(raw_text or "").strip()
+    match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b", text, re.I)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2) or "0")
+        suffix = match.group(3).upper()
+        if suffix == "PM" and hour < 12:
+            hour += 12
+        if suffix == "AM" and hour == 12:
+            hour = 0
+        return f"{hour:02d}:{minute:02d}"
+    match = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", text)
+    if match:
+        return f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+    return ""
+
+
+def _parse_nolworld_schedule_options(html_text):
+    play_time_info = _extract_nolworld_rsc_field(html_text, "playTimeInfo")
+    play_time_info = (
+        play_time_info
+        .replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\r\n", "\n")
+    )
+    schedules = []
+    seen = set()
+    for raw_line in re.split(r"[\r\n]+", play_time_info):
+        line = raw_line.strip()
+        if not line:
+            continue
+        date_match = re.search(r"(20\d{2})\D+(\d{1,2})\D+(\d{1,2})", line)
+        if not date_match:
+            continue
+        date_value = (
+            date_match.group(1)
+            + date_match.group(2).zfill(2)
+            + date_match.group(3).zfill(2)
+        )
+        time_value = _normalize_nolworld_time(line)
+        key = (date_value, time_value)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = f"{date_value[:4]}-{date_value[4:6]}-{date_value[6:8]}"
+        if time_value:
+            label = f"{label} {time_value} KST"
+        schedules.append(
+            {
+                "date": date_value,
+                "time": time_value,
+                "label": label,
+                "raw": line,
+            }
+        )
+
+    if schedules:
+        return schedules
+
+    for match in re.finditer(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html_text,
+        re.I | re.S,
+    ):
+        try:
+            payload = json.loads(html.unescape(match.group(1)))
+        except Exception:
+            continue
+        start = payload.get("startDate")
+        end = payload.get("endDate") or start
+        try:
+            start_date = date.fromisoformat(str(start)[:10])
+            end_date = date.fromisoformat(str(end)[:10])
+        except Exception:
+            continue
+        if end_date < start_date or (end_date - start_date).days > 31:
+            continue
+        cursor = start_date
+        while cursor <= end_date:
+            value = cursor.strftime("%Y%m%d")
+            schedules.append(
+                {
+                    "date": value,
+                    "time": "",
+                    "label": cursor.isoformat(),
+                    "raw": cursor.isoformat(),
+                }
+            )
+            cursor += timedelta(days=1)
+        if schedules:
+            break
+    return schedules
+
+
+def _parse_nolworld_price_options(html_text):
+    seat_types = []
+    seen = set()
+    patterns = [
+        r'\\"price\\":\[(.*?)\],\\"goodsBiz',
+        r'"price":\[(.*?)\],"goodsBiz',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html_text, re.S)
+        if not match:
+            continue
+        raw = match.group(1).replace(r"\"", '"')
+        try:
+            prices = json.loads("[%s]" % raw)
+        except Exception:
+            continue
+        for row in prices:
+            name = str(row.get("seatGradeName") or "").strip()
+            if not name:
+                continue
+            normalized = "STANDING" if "standing" in name.lower() else "SEATED"
+            key = (normalized, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            seat_types.append(
+                {
+                    "type": normalized,
+                    "label": name,
+                    "grade": str(row.get("seatGrade") or ""),
+                    "price": row.get("salesPrice"),
+                }
+            )
+        if seat_types:
+            break
+    return seat_types
+
+
+def parse_nolworld_public_options(html_text):
+    return {
+        "schedules": _parse_nolworld_schedule_options(html_text),
+        "seatTypes": _parse_nolworld_price_options(html_text),
+    }
+
+
+def _is_nolworld_options_url(url):
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    host = parsed.netloc.lower()
+    return parsed.scheme in {"http", "https"} and (
+        host == "world.nol.com"
+        or host.endswith(".world.nol.com")
+        or host == "nol.com"
+        or host.endswith(".nol.com")
+    )
+
+
 class NoCacheStaticFileHandler(StaticFileHandler):
     """Custom StaticFileHandler that prevents stale settings UI assets."""
     def set_extra_headers(self, path):
@@ -491,6 +671,36 @@ class LoadJsonHandler(tornado.web.RequestHandler):
         config_dict["advanced"]["remote_url"] = f'"http://127.0.0.1:{server_port}/"'
 
         self.write(config_dict)
+
+class NolWorldOptionsHandler(tornado.web.RequestHandler):
+    def get(self):
+        url = self.get_argument("url", "").strip()
+        if not _is_nolworld_options_url(url):
+            self.set_status(400)
+            self.write({"success": False, "message": "invalid NOL World URL"})
+            return
+
+        try:
+            response = requests.get(
+                url,
+                timeout=8.0,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/126.0 Safari/537.36"
+                    ),
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+            )
+            response.raise_for_status()
+            options = parse_nolworld_public_options(response.text)
+            options["success"] = True
+            self.write(options)
+        except Exception as exc:
+            self.set_status(502)
+            self.write({"success": False, "message": str(exc)})
+
 
 class ResetJsonHandler(tornado.web.RequestHandler):
     def get(self):
@@ -793,6 +1003,7 @@ async def main_server():
         
         # json api
         ("/load", LoadJsonHandler),
+        ("/nolworld/options", NolWorldOptionsHandler),
         ("/save", SaveJsonHandler),
         ("/reset", ResetJsonHandler),
 

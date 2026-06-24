@@ -2478,6 +2478,7 @@ async def _nodriver_tixcraft_submit_captcha_if_ready(tab, config_dict, source="m
                 const rect = element.getBoundingClientRect();
                 return style.display !== 'none' &&
                     style.visibility !== 'hidden' &&
+                    style.opacity !== '0' &&
                     rect.width > 0 &&
                     rect.height > 0;
             }};
@@ -2537,21 +2538,28 @@ async def _nodriver_tixcraft_submit_captcha_if_ready(tab, config_dict, source="m
             verify.focus();
             verify.dispatchEvent(new Event('input', {{bubbles: true}}));
             verify.dispatchEvent(new Event('change', {{bubbles: true}}));
+            verify.dispatchEvent(new Event('blur', {{bubbles: true}}));
             const form = verify.closest('form') || document.querySelector('#TicketForm');
             const buttons = Array.from(document.querySelectorAll(
-                'button, input[type="submit"], a.btn, .btn'
+                '#ticketPriceSubmit,' +
+                'button[type="submit"],input[type="submit"],' +
+                'button,a.btn,.btn'
             )).filter(button => visible(button) && !button.disabled &&
                 !button.classList.contains('disabled')
             );
             const submit = buttons.find(button => {{
-                const text = (
+                const text = [
+                    button.id,
+                    button.name,
                     button.innerText ||
                     button.value ||
                     button.getAttribute('aria-label') ||
                     button.title ||
                     ''
-                ).trim();
-                return button.type === 'submit' ||
+                ].filter(Boolean).join(' ').trim();
+                return button.id === 'ticketPriceSubmit' ||
+                    button.getAttribute('data-action') === 'submit' ||
+                    button.type === 'submit' ||
                     /下一步|送出|確認|確定|next|submit|confirm/i.test(text) ||
                     button.classList.contains('btn-primary');
             }});
@@ -2851,14 +2859,18 @@ async def nodriver_tixcraft_keyin_captcha_code(tab, answer="", auto_submit=False
                         form_ready = util.parse_nodriver_result(form_ready)
 
                         if form_ready.get('ready', False):
-                            # 提交表單 (按 Enter) - 使用完整的鍵盤事件
-                            await tab.send(cdp.input_.dispatch_key_event("keyDown", code="Enter", key="Enter", text="\r", windows_virtual_key_code=13))
-                            await tab.send(cdp.input_.dispatch_key_event("keyUp", code="Enter", key="Enter", text="\r", windows_virtual_key_code=13))
+                            is_form_submitted = await _nodriver_tixcraft_submit_captcha_if_ready(
+                                tab,
+                                config_dict or {},
+                                source="ocr-ready",
+                            )
+                            if not is_form_submitted:
+                                # Final fallback for older pages that submit from the captcha input.
+                                await tab.send(cdp.input_.dispatch_key_event("keyDown", code="Enter", key="Enter", text="\r", windows_virtual_key_code=13))
+                                await tab.send(cdp.input_.dispatch_key_event("keyUp", code="Enter", key="Enter", text="\r", windows_virtual_key_code=13))
+                                is_form_submitted = True
+                                _state["captcha_submit_until"] = time.time() + 1.5
                             is_verifyCode_editing = False
-                            is_form_submitted = True
-                            # Short submit-in-progress guard: stop the main loop from
-                            # re-clicking the captcha input while navigation is pending.
-                            _state["captcha_submit_until"] = time.time() + 1.5
                         else:
                             debug.log(f"[TIXCRAFT CAPTCHA] Form not ready - Ticket:{form_ready.get('ticket')} Select:{form_ready.get('ticket_select')} Captcha:{form_ready.get('verify')} Agreement:{form_ready.get('agree')}")
                     else:

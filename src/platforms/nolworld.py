@@ -560,6 +560,12 @@ def _preferred_dates(config_dict: dict[str, Any]) -> list[str]:
     values = _split_values(
         config_dict.get("date_auto_select", {}).get("date_keyword", "")
     )
+    for target in config_dict.get("nolworld", {}).get("schedule_targets", []) or []:
+        if not isinstance(target, dict):
+            continue
+        value = str(target.get("date", "")).strip()
+        if value:
+            values.append(value)
     normalized: list[str] = []
     for value in values:
         digits = re.sub(r"\D", "", value)
@@ -569,10 +575,45 @@ def _preferred_dates(config_dict: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(normalized))
 
 
+def _preferred_schedule_targets(config_dict: dict[str, Any]) -> list[dict[str, str]]:
+    targets: list[dict[str, str]] = []
+    for item in config_dict.get("nolworld", {}).get("schedule_targets", []) or []:
+        if not isinstance(item, dict):
+            continue
+        date_value = re.sub(r"\D", "", str(item.get("date", "")))
+        if len(date_value) != 8:
+            continue
+        time_value = str(item.get("time", "")).strip()
+        targets.append(
+            {
+                "date": date_value,
+                "time": time_value,
+                "label": str(item.get("label", "")).strip(),
+            }
+        )
+    return targets
+
+
 def _preferred_tiers(config_dict: dict[str, Any]) -> list[str]:
     return _split_values(
         config_dict.get("area_auto_select", {}).get("area_keyword", "")
     )
+
+
+def _preferred_seat_types(config_dict: dict[str, Any]) -> list[str]:
+    values = config_dict.get("nolworld", {}).get("seat_types", []) or []
+    normalized: list[str] = []
+    for value in values:
+        text = str(value).strip().upper()
+        if "STAND" in text:
+            normalized.append("STANDING")
+        elif "SEAT" in text or "RESERVED" in text:
+            normalized.append("SEATED")
+    return list(dict.fromkeys(normalized))
+
+
+def _preferred_seat_zones(config_dict: dict[str, Any]) -> list[str]:
+    return _split_values(config_dict.get("nolworld", {}).get("seat_zones", ""))
 
 
 def _selection_mode(config_dict: dict[str, Any], section: str) -> str:
@@ -735,12 +776,21 @@ PAGE_SNAPSHOT_JS = r"""
 LOGIN_JS = r"""
 (() => {
   const credentials = __CREDENTIALS__;
+  window.__myhunterNolLoginState = window.__myhunterNolLoginState || {};
   const email = document.querySelector('input[name="email"],input[type="email"]');
   const password = document.querySelector(
     'input[name="password"],input[type="password"][autocomplete="current-password"]'
   );
   if (!email || !password) return {action: 'login_form_missing'};
 
+  const visible = el => {
+    if (!el || !el.isConnected) return false;
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' &&
+      Number.parseFloat(style.opacity || '1') !== 0 &&
+      rect.width > 0 && rect.height > 0;
+  };
   const setValue = (input, value) => {
     const prototype = input instanceof HTMLTextAreaElement
       ? HTMLTextAreaElement.prototype
@@ -755,9 +805,23 @@ LOGIN_JS = r"""
     }));
     input.dispatchEvent(new Event('change', {bubbles: true}));
   };
+  const fillGradually = (input, value, fieldName) => {
+    const current = String(input.value || '');
+    if (current === value) return true;
+    const base = value.startsWith(current) ? current : '';
+    const next = value.slice(0, Math.min(value.length, base.length + 4));
+    input.focus();
+    setValue(input, next);
+    window.__myhunterNolLoginState[fieldName] = next.length;
+    return next === value;
+  };
 
-  if (email.value !== credentials.account) setValue(email, credentials.account);
-  if (password.value !== credentials.password) setValue(password, credentials.password);
+  if (!fillGradually(email, credentials.account, 'email')) {
+    return {action: 'login_email_filling', filled: false, delay: 0.25};
+  }
+  if (!fillGradually(password, credentials.password, 'password')) {
+    return {action: 'login_password_filling', filled: false, delay: 0.25};
+  }
 
   const challenge = document.querySelector('input[name="cf-turnstile-response"]');
   const challengeReady = !challenge || Boolean(challenge.value);
@@ -767,7 +831,20 @@ LOGIN_JS = r"""
 
   const form = email.closest('form') || password.closest('form');
   if (!form) return {action: 'login_form_missing', filled: true};
-  if (typeof form.requestSubmit === 'function') form.requestSubmit();
+  const candidates = [
+    ...form.querySelectorAll('button,input[type="submit"],[role="button"]'),
+    ...document.querySelectorAll('button,input[type="submit"],[role="button"]')
+  ].filter(item => visible(item) && !item.disabled && !item.getAttribute('aria-disabled'));
+  const submit = candidates.find(item => {
+    const text = (
+      item.innerText || item.value || item.getAttribute('aria-label') || ''
+    ).trim();
+    return item.type === 'submit' || /log\s*in|login|sign\s*in|continue|next/i.test(text);
+  });
+  if (submit) {
+    submit.scrollIntoView({block: 'center', behavior: 'instant'});
+    submit.click();
+  } else if (typeof form.requestSubmit === 'function') form.requestSubmit();
   else {
     password.focus();
     password.dispatchEvent(new KeyboardEvent('keydown', {
@@ -982,6 +1059,36 @@ ONESTOP_SCHEDULE_JS = r"""
     /\bselected\b|\bactive\b|\bchecked\b/i.test(
       `${el?.className || ''} ${el?.parentElement?.className || ''}`
     );
+  const normalizeTime = raw => {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    let match = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i);
+    if (match) {
+      let hour = Number.parseInt(match[1], 10);
+      const minute = Number.parseInt(match[2] || '0', 10);
+      const suffix = match[3].toUpperCase();
+      if (suffix === 'PM' && hour < 12) hour += 12;
+      if (suffix === 'AM' && hour === 12) hour = 0;
+      return String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+    }
+    match = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+    if (match) return String(Number.parseInt(match[1], 10)).padStart(2, '0') + ':' + match[2];
+    return text.toLowerCase();
+  };
+  const timeMatches = (button, preferredTimes) => {
+    if (!preferredTimes.length) return true;
+    const text = [
+      button.textContent,
+      button.getAttribute('aria-label'),
+      button.getAttribute('title'),
+      button.dataset?.time,
+      button.value
+    ].filter(Boolean).join(' ');
+    const normalized = normalizeTime(text);
+    return preferredTimes.some(value => {
+      const preferred = normalizeTime(value);
+      return normalized === preferred || text.toLowerCase().includes(String(value).toLowerCase());
+    });
+  };
   const monthNames = {
     jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
     apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
@@ -1069,17 +1176,26 @@ ONESTOP_SCHEDULE_JS = r"""
     '[role="button"][class*="TimeBlock_timeButton"]'
   )]
     .filter(button => !button.disabled && visible(button));
-  const selectedTime = timeButtons.find(selected);
+  const preferredTimes = (config.scheduleTargets || [])
+    .filter(item => String(item.date || '').replace(/\D/g, '') === target.value)
+    .map(item => item.time || item.label || '')
+    .filter(Boolean);
+  const timeCandidates = timeButtons.filter(button => timeMatches(button, preferredTimes));
+  const selectedTime = timeCandidates.find(selected) || timeButtons.find(selected);
   if (!timeButtons.length) {
     return {action: 'schedule_waiting_time', date: target.value, times: 0};
   }
+  if (!timeCandidates.length && preferredTimes.length) {
+    return {action: 'no_matching_time', date: target.value, available: timeButtons.map(button => (button.textContent || '').trim())};
+  }
   if (timeButtons.length && !selectedTime) {
-    timeButtons[0].scrollIntoView({block: 'center', behavior: 'instant'});
-    timeButtons[0].click();
+    const targetTime = timeCandidates[0] || timeButtons[0];
+    targetTime.scrollIntoView({block: 'center', behavior: 'instant'});
+    targetTime.click();
     return {
       action: 'time_selected',
       date: target.value,
-      time: (timeButtons[0].textContent || '').trim()
+      time: (targetTime.textContent || '').trim()
     };
   }
 
@@ -1142,6 +1258,49 @@ BOOKING_STEP_JS = r"""
     el.scrollIntoView?.({block: 'center', behavior: 'instant'});
     el.click();
     return true;
+  };
+  const selected = el =>
+    el?.getAttribute('aria-selected') === 'true' ||
+    el?.getAttribute('aria-pressed') === 'true' ||
+    el?.dataset?.selected === 'true' ||
+    /\bselected\b|\bactive\b|\bchecked\b/i.test(
+      `${el?.className || ''} ${el?.parentElement?.className || ''}`
+    );
+  const textOf = el => [
+    el?.textContent,
+    el?.getAttribute?.('aria-label'),
+    el?.getAttribute?.('title'),
+    el?.getAttribute?.('data-name'),
+    el?.getAttribute?.('data-block'),
+    el?.getAttribute?.('data-grade')
+  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const normalizeSeatType = text => {
+    const value = String(text || '').toLowerCase();
+    if (/standing|floor|stand/i.test(value)) return 'STANDING';
+    if (/seated|reserved|seat/i.test(value)) return 'SEATED';
+    return '';
+  };
+  const parseRgb = value => {
+    const match = String(value || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+  };
+  const isPurpleAction = el => {
+    if (!el || el.disabled || !visible(el)) return false;
+    const style = el.ownerDocument.defaultView.getComputedStyle(el);
+    const rgb = parseRgb(style.backgroundColor) || parseRgb(style.borderColor);
+    if (!rgb) return false;
+    const [red, green, blue] = rgb;
+    return blue >= 120 && red >= 80 && blue > green + 25 && red > green + 10;
+  };
+  const clickSeatSelectionCompleted = doc => {
+    const buttons = [...doc.querySelectorAll('button,[role="button"],a')].filter(visible);
+    const completed = buttons.find(button =>
+      /seat\s*selection\s*completed|selection\s*completed|complete|done|next|선택\s*완료/i
+        .test(textOf(button))
+    );
+    if (completed) return click(completed);
+    const primary = buttons.find(isPurpleAction);
+    return primary ? click(primary) : false;
   };
   const isSeatConflict = text =>
     /already\s+(?:been\s+)?selected|seat\s+has\s+already|seat\s+was\s+already|already\s+taken|-1|座位.*(?:已|被)|已被選擇|선택/i
@@ -1254,6 +1413,83 @@ BOOKING_STEP_JS = r"""
         inputId: captchaInput.id || '',
         inputName: captchaInput.name || ''
       };
+    }
+
+    const configuredTypes = config.seatTypes || [];
+    const typeOrder = configuredTypes;
+    const typeButtons = [...doc.querySelectorAll(
+      'button,[role="button"],[role="tab"],a'
+    )].filter(element => {
+      const text = textOf(element);
+      return visible(element) && text.length <= 80 && normalizeSeatType(text);
+    });
+    if (configuredTypes.length && typeButtons.length) {
+      const activeTypeButton = typeButtons.find(selected);
+      const activeType = normalizeSeatType(textOf(activeTypeButton));
+      const preferredType = typeOrder.find(type =>
+        typeButtons.some(button => normalizeSeatType(textOf(button)) === type)
+      );
+      if (preferredType && activeType !== preferredType) {
+        const targetType = typeButtons.find(button =>
+          normalizeSeatType(textOf(button)) === preferredType
+        );
+        if (targetType && click(targetType)) {
+          return {action: 'seat_type_selected', seatType: preferredType, text: textOf(targetType)};
+        }
+      }
+    }
+
+    const zoneKeywords = (config.zones && config.zones.length)
+      ? config.zones
+      : (config.customBlocks && config.customBlocks.length)
+        ? config.customBlocks
+        : config.tiers;
+    const ignoredZoneText = /seat\s*selection\s*completed|selection\s*completed|previous|next|standing|reserved|seated|seat\s*type/i;
+    const zoneCandidates = [...doc.querySelectorAll(
+      'button,[role="button"],[role="option"],li,a,div[class*="Item"],div[class*="item"]'
+    )].filter(element => {
+      const text = textOf(element);
+      if (!visible(element) || !text || text.length > 120 || ignoredZoneText.test(text)) return false;
+      if (zoneKeywords.length) return matches(text, zoneKeywords);
+      return /\d{2,3}|floor|side|section|block|구역|區|區域/i.test(text);
+    });
+    const activeZone = zoneCandidates.find(selected);
+    if (zoneCandidates.length && !activeZone) {
+      const targetZone = zoneCandidates[Math.min(config.areaIndex, zoneCandidates.length - 1)];
+      if (targetZone && click(targetZone)) {
+        return {action: 'zone_selected', text: textOf(targetZone)};
+      }
+    }
+
+    const purpleButtons = [...doc.querySelectorAll('button,[role="button"],a')]
+      .filter(element => isPurpleAction(element) && !/previous|back/i.test(textOf(element)));
+    if (purpleButtons.length) {
+      const button = purpleButtons[0];
+      click(button);
+      const completed = clickSeatSelectionCompleted(doc);
+      return {
+        action: completed ? 'seat_selection_completed' : 'seat_button_clicked',
+        text: textOf(button)
+      };
+    }
+    if (zoneCandidates.length && activeZone) {
+      const activeIndex = zoneCandidates.indexOf(activeZone);
+      const nextZone = zoneCandidates[activeIndex + 1];
+      if (nextZone && click(nextZone)) {
+        return {action: 'zone_selected', text: textOf(nextZone)};
+      }
+    }
+    if (configuredTypes.length > 1 && typeButtons.length) {
+      const activeTypeButton = typeButtons.find(selected);
+      const activeType = normalizeSeatType(textOf(activeTypeButton));
+      const activeTypeIndex = Math.max(0, typeOrder.indexOf(activeType));
+      const nextType = typeOrder[(activeTypeIndex + 1) % typeOrder.length];
+      const targetType = typeButtons.find(button =>
+        normalizeSeatType(textOf(button)) === nextType
+      );
+      if (targetType && activeType !== nextType && click(targetType)) {
+        return {action: 'seat_type_selected', seatType: nextType, text: textOf(targetType)};
+      }
     }
 
     const legacyDates = [...doc.querySelectorAll(
@@ -1527,9 +1763,13 @@ async def _run_booking_step(
     await _evaluate(tab, DIALOG_HOOK_JS, config_dict)
     date_values = _preferred_dates(config_dict)
     tier_values = _preferred_tiers(config_dict)
+    zone_values = _preferred_seat_zones(config_dict)
     payload = {
         "dates": date_values,
+        "scheduleTargets": _preferred_schedule_targets(config_dict),
         "tiers": tier_values,
+        "seatTypes": _preferred_seat_types(config_dict),
+        "zones": zone_values,
         "customBlocks": platform_config["custom_blocks"],
         "numSeats": max(1, min(int(config_dict.get("ticket_number", 1)), 4)),
         "dateFallback": bool(config_dict.get("date_auto_fallback", False)),
@@ -1539,7 +1779,12 @@ async def _run_booking_step(
             _selection_mode(config_dict, "date_auto_select"),
         ),
         "areaIndex": _choose_index(
-            max(1, len(tier_values) or len(platform_config["custom_blocks"])),
+            max(
+                1,
+                len(zone_values)
+                or len(tier_values)
+                or len(platform_config["custom_blocks"]),
+            ),
             _selection_mode(config_dict, "area_auto_select"),
         ),
     }
@@ -1824,9 +2069,13 @@ async def nodriver_nolworld_main(
                 print(f"[NOL][LOGIN] {action}")
                 _state.last_action = action
                 _state.last_action_at = now
-            _state.next_action_at = now + (
-                0.8 if action == "login_submitted" else 1.5
-            )
+            try:
+                login_delay = float(result.get("delay", 0))
+            except (TypeError, ValueError):
+                login_delay = 0
+            if login_delay <= 0:
+                login_delay = 0.8 if action == "login_submitted" else 1.0
+            _state.next_action_at = now + login_delay
 
         elif _state.phase == "checking":
             notice = snapshot.get("notice") or {}

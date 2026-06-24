@@ -66,10 +66,115 @@ logging.basicConfig()
 logger = logging.getLogger('logger')
 
 
+def _parse_nolworld_cookie_config(raw_cookie_text):
+    raw_cookie_text = (raw_cookie_text or "").strip()
+    if not raw_cookie_text:
+        return []
+
+    cookies = []
+    try:
+        parsed = json.loads(raw_cookie_text)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        for name, value in parsed.items():
+            if isinstance(value, dict):
+                cookie = {"name": name, **value}
+            else:
+                cookie = {"name": name, "value": value}
+            cookies.append(cookie)
+    elif isinstance(parsed, list):
+        cookies.extend(item for item in parsed if isinstance(item, dict))
+    else:
+        for part in raw_cookie_text.split(";"):
+            if "=" not in part:
+                continue
+            name, value = part.split("=", 1)
+            name = name.strip()
+            if name:
+                cookies.append({"name": name, "value": value.strip()})
+
+    normalized = []
+    for cookie in cookies:
+        name = str(cookie.get("name", "")).strip()
+        value = str(cookie.get("value", ""))
+        if not name or not value:
+            continue
+        domain = str(cookie.get("domain", "")).strip()
+        domains = [domain] if domain else [
+            ".nol.com",
+            "world.nol.com",
+            ".interpark.com",
+            ".globalinterpark.com",
+            "gpoticket.globalinterpark.com",
+        ]
+        for target_domain in domains:
+            normalized.append(
+                {
+                    "name": name,
+                    "value": value,
+                    "domain": target_domain,
+                    "path": str(cookie.get("path", "/") or "/"),
+                    "secure": bool(cookie.get("secure", True)),
+                    "http_only": bool(cookie.get("httpOnly", cookie.get("http_only", False))),
+                }
+            )
+    return normalized
+
+
+async def _inject_nolworld_cookies(tab, driver, homepage, config_dict):
+    debug = util.create_debug_logger(config_dict)
+    raw_cookie_text = config_dict.get("accounts", {}).get("nolworld_cookies", "")
+    cookies = _parse_nolworld_cookie_config(raw_cookie_text)
+    if not cookies:
+        return False
+
+    debug.log(f"[NOL] Injecting {len(cookies)} configured cookie value(s)")
+    applied = 0
+    for cookie in cookies:
+        try:
+            try:
+                await tab.send(cdp.network.delete_cookies(
+                    name=cookie["name"],
+                    domain=cookie["domain"],
+                ))
+            except Exception:
+                pass
+            await tab.send(cdp.network.set_cookie(
+                name=cookie["name"],
+                value=cookie["value"],
+                domain=cookie["domain"],
+                path=cookie["path"],
+                secure=cookie["secure"],
+                http_only=cookie["http_only"],
+            ))
+            applied += 1
+        except Exception as exc:
+            debug.log(f"[NOL] Failed to set cookie {cookie['name']}: {exc}")
+
+    try:
+        current = await driver.cookies.get_all()
+        configured_names = {cookie["name"] for cookie in cookies}
+        matched = [cookie for cookie in current if cookie.name in configured_names]
+        debug.log(f"[NOL] Cookie injection verified {len(matched)} browser cookie(s)")
+    except Exception as exc:
+        debug.log(f"[NOL] Cookie verification skipped: {exc}")
+
+    if applied:
+        try:
+            await tab.get(homepage)
+            await asyncio.sleep(random.uniform(0.7, 1.2))
+        except Exception as exc:
+            debug.log(f"[NOL] Reload after cookie injection failed: {exc}")
+    return applied > 0
+
+
 async def nodriver_goto_homepage(driver, config_dict):
     debug = util.create_debug_logger(config_dict)
     tab = None
     homepage = config_dict["homepage"]
+    original_homepage = homepage
     if 'kktix.c' in homepage:
         # for like human.
         try:
@@ -129,9 +234,14 @@ async def nodriver_goto_homepage(driver, config_dict):
             "nolworld_password",
             "",
         )
+        nol_cookies = config_dict.get("accounts", {}).get(
+            "nolworld_cookies",
+            "",
+        ).strip()
         if (
             nol_account
             and nol_password
+            and not nol_cookies
             and "/auth-web/login" not in homepage
             and "/login" not in urllib.parse.urlparse(homepage).path.lower()
         ):
@@ -147,6 +257,14 @@ async def nodriver_goto_homepage(driver, config_dict):
         await asyncio.sleep(random.uniform(1.0, 2.5))
     except Exception as e:
         print(f"[ERROR] Failed to navigate to homepage: {e}")
+
+    if tab and any(domain in original_homepage for domain in (
+        'world.nol.com',
+        'nol.com',
+        'interpark.com',
+        'globalinterpark.com',
+    )):
+        await _inject_nolworld_cookies(tab, driver, original_homepage, config_dict)
 
     tixcraft_family = False
     if 'tixcraft.com' in homepage:
