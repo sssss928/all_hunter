@@ -20,10 +20,10 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
@@ -54,5 +54,6 @@ jobs:
         shell: pwsh
         run: |
           $env:PYTHONPATH = (Resolve-Path "src")
+          python -c "from zendriver import cdp; print('zendriver cdp import: OK')"
           python -c "import nodriver_tixcraft; print('nodriver_tixcraft import: OK')"
           python -c "from platforms.registry import PLATFORM_MODULES; import importlib; [importlib.import_module(name) for name in PLATFORM_MODULES.values()]; print(f'{len(PLATFORM_MODULES)} platform modules import: OK')"
