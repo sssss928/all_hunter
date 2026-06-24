@@ -133,8 +133,12 @@ def test_example_settings_are_safe_to_publish() -> None:
     accounts = settings["accounts"]
     assert accounts["nolworld_account"] == ""
     assert accounts["nolworld_password"] == ""
+    assert accounts["nolworld_cookies"] == ""
     assert settings["ocr_captcha"]["force_submit"] is False
     assert settings["nolworld"]["security_handoff"] is True
+    assert settings["nolworld"]["schedule_targets"] == []
+    assert settings["nolworld"]["seat_types"] == []
+    assert settings["nolworld"]["seat_zones"] == ""
     assert settings["advanced"]["discord_webhook_url"] == ""
     assert settings["advanced"]["telegram_bot_token"] == ""
 
@@ -147,6 +151,10 @@ def test_release_workflow_publishes_binary_and_source_archives() -> None:
     assert "build_source.ps1" in workflow
     assert "dist/release/" in workflow
     assert "dist/source/" in workflow
+    assert "actions/checkout@v4" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+    assert "softprops/action-gh-release@v2" in workflow
+    assert "from zendriver import cdp" in workflow
 
 
 def test_runtime_does_not_contain_protected_verification_bypass() -> None:
@@ -167,8 +175,13 @@ def test_runtime_does_not_contain_protected_verification_bypass() -> None:
 
 def test_tixcraft_manual_captcha_can_submit_after_user_finishes_input() -> None:
     source = (PLATFORMS / "tixcraft.py").read_text(encoding="utf-8")
+    runtime = (SRC / "nodriver_tixcraft.py").read_text(encoding="utf-8")
     assert "_nodriver_tixcraft_submit_captcha_if_ready" in source
     assert 'source="manual"' in source
+    assert 'source="ocr-ready"' in source
     assert "captchaValue.length === 4" in source
+    assert "#ticketPriceSubmit" in source
     assert "form.requestSubmit" in source
     assert "button.classList.contains('btn-primary')" in source
+    assert '"nolworld_cookies"' in runtime
+    assert '".globalinterpark.com"' in runtime

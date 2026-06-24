@@ -7,6 +7,21 @@ const vm = require('node:vm');
 const source = fs.readFileSync('src/platforms/nolworld.py', 'utf8');
 const match = source.match(/ONESTOP_SCHEDULE_JS = r"""([\s\S]*?)"""/);
 assert.ok(match, 'ONESTOP_SCHEDULE_JS must be present');
+const bookingMatch = source.match(/BOOKING_STEP_JS = r"""([\s\S]*?)"""/);
+assert.ok(bookingMatch, 'BOOKING_STEP_JS must be present');
+new vm.Script(bookingMatch[1].replace('__CONFIG__', JSON.stringify({
+  dates: [],
+  scheduleTargets: [],
+  tiers: [],
+  seatTypes: ['STANDING', 'SEATED'],
+  zones: [],
+  customBlocks: [],
+  numSeats: 1,
+  dateFallback: false,
+  areaFallback: false,
+  dateIndex: 0,
+  areaIndex: 0,
+})));
 
 const state = {
   dateSelected: false,
@@ -100,6 +115,7 @@ const context = {
 };
 const config = {
   dates: ['20260712'],
+  scheduleTargets: [{date: '20260712', time: '17:00'}],
   dateFallback: false,
   dateIndex: 0,
 };

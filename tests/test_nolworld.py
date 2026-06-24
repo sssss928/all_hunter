@@ -113,8 +113,45 @@ def test_default_settings_include_nolworld() -> None:
     assert config["nolworld"]["security_handoff"] is True
     assert config["nolworld"]["auto_notice_and_buy"] is True
     assert config["nolworld"]["session_timeout_minutes"] == 10
+    assert config["nolworld"]["schedule_targets"] == []
+    assert config["nolworld"]["seat_types"] == []
+    assert config["nolworld"]["seat_zones"] == ""
     assert config["accounts"]["nolworld_account"] == ""
     assert config["accounts"]["nolworld_password"] == ""
+    assert config["accounts"]["nolworld_cookies"] == ""
+
+
+def test_parse_nolworld_public_options_from_event_html() -> None:
+    html = (
+        r'self.__next_f.push([1,"{\"detail\":{\"playTimeInfo\":\"'
+        r'2026년 7월 10일(금) 7PM(KST)\r\n'
+        r'2026년 7월 11일(토) 6PM(KST)'
+        r'\"},\"price\":[{\"seatGrade\":\"1\",\"seatGradeName\":\"Standing\",'
+        r'\"salesPrice\":154000},{\"seatGrade\":\"2\",'
+        r'\"seatGradeName\":\"Reserved Seat\",\"salesPrice\":154000}],'
+        r'\"goodsBiz\":{}}"])'
+    )
+
+    result = settings.parse_nolworld_public_options(html)
+
+    assert result["schedules"] == [
+        {
+            "date": "20260710",
+            "time": "19:00",
+            "label": "2026-07-10 19:00 KST",
+            "raw": "2026년 7월 10일(금) 7PM(KST)",
+        },
+        {
+            "date": "20260711",
+            "time": "18:00",
+            "label": "2026-07-11 18:00 KST",
+            "raw": "2026년 7월 11일(토) 6PM(KST)",
+        },
+    ]
+    assert result["seatTypes"] == [
+        {"type": "STANDING", "label": "Standing", "grade": "1", "price": 154000},
+        {"type": "SEATED", "label": "Reserved Seat", "grade": "2", "price": 154000},
+    ]
 
 
 def test_nolworld_interval_does_not_fall_back_to_general_reload() -> None:
@@ -134,8 +171,13 @@ def test_nolworld_is_wired_into_ui_and_release() -> None:
     assert "https://world.nol.com" in settings_html
     assert 'id="nolworld_account"' in settings_html
     assert 'id="nolworld_password"' in settings_html
+    assert 'id="nolworld_cookies"' in settings_html
+    assert 'id="nol_schedule_options"' in settings_html
+    assert 'id="nol_seat_type_options"' in settings_html
+    assert 'id="nol_seat_zone_targets"' in settings_html
     assert 'id="nol_auto_notice_and_buy"' in settings_html
     assert 'id="auto-reload-page-interval-row"' in settings_html
+    assert "/nolworld/options" in (SRC / "settings.py").read_text(encoding="utf-8")
     assert "platform === 'nolworld'" in settings_js
     assert "key: 'nolworld'" in settings_js
     assert "'platforms.nolworld'" in spec
@@ -145,9 +187,15 @@ def test_nolworld_booking_scripts_cover_recovery_paths() -> None:
     assert "schedule_waiting_next" in nolworld.ONESTOP_SCHEDULE_JS
     assert "schedule_waiting_time" in nolworld.ONESTOP_SCHEDULE_JS
     assert "schedule_submitted" in nolworld.ONESTOP_SCHEDULE_JS
+    assert "scheduleTargets" in nolworld.ONESTOP_SCHEDULE_JS
+    assert "no_matching_time" in nolworld.ONESTOP_SCHEDULE_JS
     assert "monthNames" in nolworld.ONESTOP_SCHEDULE_JS
     assert "seat_conflict_recovered" in nolworld.BOOKING_STEP_JS
     assert "seat_next_retried" in nolworld.BOOKING_STEP_JS
+    assert "seat_type_selected" in nolworld.BOOKING_STEP_JS
+    assert "zone_selected" in nolworld.BOOKING_STEP_JS
+    assert "seat_selection_completed" in nolworld.BOOKING_STEP_JS
+    assert "isPurpleAction" in nolworld.BOOKING_STEP_JS
     assert "slider_captcha" in nolworld.BOOKING_STEP_JS
     assert ".captchSliderInner" in nolworld.BOOKING_STEP_JS
     assert "protected_challenge" in nolworld.BOOKING_STEP_JS
